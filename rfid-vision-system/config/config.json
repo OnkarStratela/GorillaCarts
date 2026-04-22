@@ -1,0 +1,30 @@
+{
+    "socket_path": "/tmp/rfid_vision.sock",
+    "output_dir": "output",
+    "camera": {
+      "index": 0,
+      "width": 640,
+      "height": 480,
+      "fps": 30
+    },
+    "detection": {
+      "motion_threshold": 25.0,
+      "blur_kernel": [5, 5],
+      "min_area": 2000,
+      "max_area": 200000,
+      "aspect_ratio_min": 0.6,
+      "aspect_ratio_max": 3.5,
+      "presence_min_frames": 3,
+      "absence_min_frames": 10
+    },
+    "association": {
+      "rfid_buffer_seconds": 30,
+      "entry_buffer_seconds": 2.0,
+      "exit_buffer_seconds": 2.0,
+      "min_confidence": 0.6
+    },
+    "capture": {
+      "top_n_frames": 5,
+      "save_visualization": true
+    }
+  }
