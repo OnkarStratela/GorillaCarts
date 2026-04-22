@@ -13,6 +13,7 @@
 
 #define MAX_ID_LENGTH 64
 #define MAX_TAGS 2500
+#define ANTENNA_COUNT 2
 
 // ANSI color codes
 #define GREEN "\033[0;32m"
@@ -24,6 +25,7 @@ volatile int running = 0;
 
 // Store unique tags
 char unique_tags[MAX_TAGS][2 * MAX_ID_LENGTH + 1];
+uint8_t tag_antenna_seen[MAX_TAGS];
 int tag_count = 0;
 
 static bool onError(CAENRFIDErrorCodes ec) {
@@ -56,6 +58,15 @@ static bool tag_exists(const char* tag) {
     return false;
 }
 
+static int get_tag_index(const char* tag) {
+    for (int i = 0; i < tag_count; i++) {
+        if (strcmp(unique_tags[i], tag) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 // Load existing tags from CSV
 static void load_from_csv() {
     FILE* csv = fopen("scanned_tags.csv", "r");
@@ -80,6 +91,7 @@ static void load_from_csv() {
             
             if (tag_count < MAX_TAGS) {
                 strcpy(unique_tags[tag_count], tag);
+                tag_antenna_seen[tag_count] = 0;
                 tag_count++;
             }
         }
@@ -131,7 +143,8 @@ int main() {
         .flowControl = 0,
     };
     
-    char model[64], serial[64], source[32] = "Source_0";
+    char model[64], serial[64];
+    const char* sources[ANTENNA_COUNT] = {"Source_0", "Source_1"};
     int power = 316;
     int tags_before_session;
     
@@ -161,6 +174,7 @@ int main() {
     
     ec = CAENRFID_SetPower(&reader, power);
     printf("[SCANNER] Power set to %d mW\n\n", power);
+    printf("[SCANNER] Active antennas: %s and %s\n\n", sources[0], sources[1]);
     
     // Wait for user to start
     printf("%sPress ENTER to start scanning...%s", YELLOW, RESET);
@@ -175,33 +189,42 @@ int main() {
         CAENRFIDTagList *tags = NULL, *aux;
         uint16_t numTags = 0;
         
-        ec = CAENRFID_InventoryTag(&reader, source, 0, 0, 0, 
-                                   NULL, 0, RSSI, &tags, &numTags);
-        
-        if (ec == CAENRFID_StatusOK && numTags > 0) {
-            aux = tags;
-            while (aux != NULL) {
-                char epcStr[2 * MAX_ID_LENGTH + 1];
-                printHex(aux->Tag.ID, aux->Tag.Length, epcStr);
-                
-                // Check if this is a new unique tag
-                if (!tag_exists(epcStr)) {
-                    if (tag_count < MAX_TAGS) {
-                        strcpy(unique_tags[tag_count], epcStr);
-                        tag_count++;
-                        
-                        // Display in green with count
-                        printf("%s[%d] %s%s\n", GREEN, tag_count, epcStr, RESET);
+        for (int antenna_idx = 0; antenna_idx < ANTENNA_COUNT && running; antenna_idx++) {
+            ec = CAENRFID_InventoryTag(&reader, (char*)sources[antenna_idx], 0, 0, 0,
+                                       NULL, 0, RSSI, &tags, &numTags);
+
+            if (ec == CAENRFID_StatusOK && numTags > 0) {
+                aux = tags;
+                while (aux != NULL) {
+                    char epcStr[2 * MAX_ID_LENGTH + 1];
+                    printHex(aux->Tag.ID, aux->Tag.Length, epcStr);
+
+                    int existing_index = get_tag_index(epcStr);
+                    if (existing_index < 0) {
+                        if (tag_count < MAX_TAGS) {
+                            strcpy(unique_tags[tag_count], epcStr);
+                            tag_antenna_seen[tag_count] = (uint8_t)(1U << antenna_idx);
+                            tag_count++;
+
+                            // Display in green with count and source antenna
+                            printf("%s[%d] %s [%s]%s\n", GREEN, tag_count, epcStr, sources[antenna_idx], RESET);
+                        } else {
+                            printf("%s[WARNING] Max capacity reached!%s\n", YELLOW, RESET);
+                            running = 0;
+                            break;
+                        }
                     } else {
-                        printf("%s[WARNING] Max capacity reached!%s\n", YELLOW, RESET);
-                        running = 0;
-                        break;
+                        uint8_t antenna_bit = (uint8_t)(1U << antenna_idx);
+                        if ((tag_antenna_seen[existing_index] & antenna_bit) == 0) {
+                            tag_antenna_seen[existing_index] |= antenna_bit;
+                            printf("%s[%d] %s [%s]%s\n", GREEN, existing_index + 1, epcStr, sources[antenna_idx], RESET);
+                        }
                     }
+
+                    CAENRFIDTagList *next = aux->Next;
+                    free(aux);
+                    aux = next;
                 }
-                
-                CAENRFIDTagList *next = aux->Next;
-                free(aux);
-                aux = next;
             }
         }
         

@@ -13,6 +13,7 @@
 
 #define MAX_ID_LENGTH 64
 #define MAX_TAGS 1024
+#define ANTENNA_COUNT 2
 
 // ANSI color codes
 #define GREEN "\033[0;32m"
@@ -71,7 +72,8 @@ int main() {
         .flowControl = 0,
     };
     
-    char model[64], serial[64], source[32] = "Source_0";
+    char model[64], serial[64];
+    const char* sources[ANTENNA_COUNT] = {"Source_0", "Source_1"};
     // Lower power for short-range detection
     int power = 316;  // Start with 140mW (10% on CAEN)
     
@@ -101,6 +103,7 @@ int main() {
     
     // Start continuous inventory
     printf("[RFID] Starting continuous scanning with RSSI filtering...\n");
+    printf("[RFID] Active antennas: %s and %s\n", sources[0], sources[1]);
     printf("[RFID] RSSI threshold: %d dBm (for ~10cm range)\n", RSSI_THRESHOLD);
     running = 1;
     
@@ -116,64 +119,66 @@ int main() {
         CAENRFIDTagList *tags = NULL, *aux;
         uint16_t numTags = 0;
         
-        // Perform inventory WITH RSSI flag enabled (0x0001)
-        ec = CAENRFID_InventoryTag(&reader, source, 0, 0, 0, 
-                                   NULL, 0, RSSI, &tags, &numTags);
-        
-        if (ec == CAENRFID_StatusOK) {
-            if (numTags > 0) {
-                aux = tags;
-                while (aux != NULL) {
-                    char epcStr[2 * MAX_ID_LENGTH + 1];
-                    printHex(aux->Tag.ID, aux->Tag.Length, epcStr);
-                    
-                    // RSSI FILTERING - Only process tags with strong signals
-                    if (aux->Tag.RSSI >= RSSI_THRESHOLD) {
-                        // Check if this is a new tag
-                        bool is_new = true;
-                        for (int i = 0; i < tag_count; i++) {
-                            if (strcmp(seen_tags[i], epcStr) == 0) {
-                                is_new = false;
-                                break;
+        for (int antenna_idx = 0; antenna_idx < ANTENNA_COUNT; antenna_idx++) {
+            // Perform inventory WITH RSSI flag enabled (0x0001)
+            ec = CAENRFID_InventoryTag(&reader, (char*)sources[antenna_idx], 0, 0, 0,
+                                       NULL, 0, RSSI, &tags, &numTags);
+
+            if (ec == CAENRFID_StatusOK) {
+                if (numTags > 0) {
+                    aux = tags;
+                    while (aux != NULL) {
+                        char epcStr[2 * MAX_ID_LENGTH + 1];
+                        printHex(aux->Tag.ID, aux->Tag.Length, epcStr);
+
+                        // RSSI FILTERING - Only process tags with strong signals
+                        if (aux->Tag.RSSI >= RSSI_THRESHOLD) {
+                            // Check if this is a new tag
+                            bool is_new = true;
+                            for (int i = 0; i < tag_count; i++) {
+                                if (strcmp(seen_tags[i], epcStr) == 0) {
+                                    is_new = false;
+                                    break;
+                                }
+                            }
+
+                            if (is_new) {
+                                // Get current time
+                                time_t rawtime;
+                                struct tm * timeinfo;
+                                char time_buffer[80];
+
+                                time(&rawtime);
+                                timeinfo = localtime(&rawtime);
+                                strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
+
+                                // Display tag in GREEN color with RSSI value and antenna source
+                                printf("%s[RFID] TAG DETECTED: %s (RSSI: %d dBm) [%s]%s [%s]\n",
+                                       GREEN, epcStr, aux->Tag.RSSI, sources[antenna_idx], RESET, time_buffer);
+
+                                if (tag_count < MAX_TAGS) {
+                                    strcpy(seen_tags[tag_count++], epcStr);
+                                }
+                            }
+                        } else {
+                            // Tag rejected due to weak signal
+                            rejected_count++;
+                            if (rejected_count % 100 == 0) {
+                                printf("%s[RFID] Rejected %d weak tags (RSSI < %d dBm)%s\n",
+                                       YELLOW, rejected_count, RSSI_THRESHOLD, RESET);
                             }
                         }
-                        
-                        if (is_new) {
-                            // Get current time
-                            time_t rawtime;
-                            struct tm * timeinfo;
-                            char time_buffer[80];
-                            
-                            time(&rawtime);
-                            timeinfo = localtime(&rawtime);
-                            strftime(time_buffer, sizeof(time_buffer), "%Y-%m-%d %H:%M:%S", timeinfo);
-                            
-                            // Display tag in GREEN color with RSSI value
-                            printf("%s[RFID] TAG DETECTED: %s (RSSI: %d dBm)%s [%s]\n", 
-                                   GREEN, epcStr, aux->Tag.RSSI, RESET, time_buffer);
-                            
-                            if (tag_count < MAX_TAGS) {
-                                strcpy(seen_tags[tag_count++], epcStr);
-                            }
-                        }
-                    } else {
-                        // Tag rejected due to weak signal
-                        rejected_count++;
-                        if (rejected_count % 100 == 0) {
-                            printf("%s[RFID] Rejected %d weak tags (RSSI < %d dBm)%s\n", 
-                                   YELLOW, rejected_count, RSSI_THRESHOLD, RESET);
-                        }
+
+                        CAENRFIDTagList *next = aux->Next;
+                        free(aux);
+                        aux = next;
                     }
-                    
-                    CAENRFIDTagList *next = aux->Next;
-                    free(aux);
-                    aux = next;
                 }
-            }
-        } else {
-            // Log error every 100 scans to avoid spam
-            if (scan_count % 100 == 0 && scan_count > 0) {
-                printf("[RFID] Scan error (code: %d) - continuing...\n", ec);
+            } else {
+                // Log error every 100 scans to avoid spam
+                if (scan_count % 100 == 0 && scan_count > 0) {
+                    printf("[RFID] Scan error (code: %d) - continuing...\n", ec);
+                }
             }
         }
         
