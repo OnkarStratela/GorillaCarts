@@ -48,16 +48,6 @@ static void handle_sigint(int sig) {
     running = 0;
 }
 
-// Check if tag already exists
-static bool tag_exists(const char* tag) {
-    for (int i = 0; i < tag_count; i++) {
-        if (strcmp(unique_tags[i], tag) == 0) {
-            return true;
-        }
-    }
-    return false;
-}
-
 static int get_tag_index(const char* tag) {
     for (int i = 0; i < tag_count; i++) {
         if (strcmp(unique_tags[i], tag) == 0) {
