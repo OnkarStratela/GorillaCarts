@@ -49,30 +49,17 @@ class CAENRFIDInventoryParams(ctypes.Structure):
     ]
 
 
-CONNECT_FN = ctypes.CFUNCTYPE(ctypes.c_int16, POINTER(ctypes.c_void_p), ctypes.c_int16, ctypes.c_void_p)
-DISCONNECT_FN = ctypes.CFUNCTYPE(ctypes.c_int16, ctypes.c_void_p)
-TX_FN = ctypes.CFUNCTYPE(ctypes.c_int16, ctypes.c_void_p, POINTER(ctypes.c_uint8), ctypes.c_uint32)
-RX_FN = ctypes.CFUNCTYPE(
-    ctypes.c_int16,
-    ctypes.c_void_p,
-    POINTER(ctypes.c_uint8),
-    ctypes.c_uint32,
-    ctypes.c_uint32,
-)
-CLEAR_RX_FN = ctypes.CFUNCTYPE(ctypes.c_int16, ctypes.c_void_p)
-IRQ_FN = ctypes.CFUNCTYPE(None)
-
-
 class CAENRFIDReader(ctypes.Structure):
     _fields_ = [
         ("_port_handle", ctypes.c_void_p),
-        ("connect", CONNECT_FN),
-        ("disconnect", DISCONNECT_FN),
-        ("tx", TX_FN),
-        ("rx", RX_FN),
-        ("clear_rx_data", CLEAR_RX_FN),
-        ("enable_irqs", IRQ_FN),
-        ("disable_irqs", IRQ_FN),
+        # Keep raw function pointers (as in C struct) to avoid callback wrapper issues.
+        ("connect", ctypes.c_void_p),
+        ("disconnect", ctypes.c_void_p),
+        ("tx", ctypes.c_void_p),
+        ("rx", ctypes.c_void_p),
+        ("clear_rx_data", ctypes.c_void_p),
+        ("enable_irqs", ctypes.c_void_p),
+        ("disable_irqs", ctypes.c_void_p),
         ("_inventory_params", CAENRFIDInventoryParams),
     ]
 
@@ -174,15 +161,23 @@ def load_caen_library(base_dir: str):
 
 
 def make_reader(lib) -> CAENRFIDReader:
+    connect_ptr = ctypes.cast(lib._connect, ctypes.c_void_p).value
+    disconnect_ptr = ctypes.cast(lib._disconnect, ctypes.c_void_p).value
+    tx_ptr = ctypes.cast(lib._tx, ctypes.c_void_p).value
+    rx_ptr = ctypes.cast(lib._rx, ctypes.c_void_p).value
+    clear_rx_ptr = ctypes.cast(lib._clear_rx_data, ctypes.c_void_p).value
+    enable_irqs_ptr = ctypes.cast(lib._enable_irqs, ctypes.c_void_p).value
+    disable_irqs_ptr = ctypes.cast(lib._disable_irqs, ctypes.c_void_p).value
+
     return CAENRFIDReader(
         None,
-        CONNECT_FN((" _connect".strip(), lib)),
-        DISCONNECT_FN(("_disconnect", lib)),
-        TX_FN(("_tx", lib)),
-        RX_FN(("_rx", lib)),
-        CLEAR_RX_FN(("_clear_rx_data", lib)),
-        IRQ_FN(("_enable_irqs", lib)),
-        IRQ_FN(("_disable_irqs", lib)),
+        connect_ptr,
+        disconnect_ptr,
+        tx_ptr,
+        rx_ptr,
+        clear_rx_ptr,
+        enable_irqs_ptr,
+        disable_irqs_ptr,
         CAENRFIDInventoryParams(),
     )
 
@@ -198,7 +193,7 @@ def free_tag_list(head: POINTER(CAENRFIDTagList), libc) -> None:
     while node:
         current = node
         node = node.contents.Next
-        libc.free(current)
+        libc.free(ctypes.cast(current, ctypes.c_void_p))
 
 
 def collect_tags_for_source(lib, libc, reader: CAENRFIDReader, source_name: str) -> list[str]:
